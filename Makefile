@@ -6,7 +6,7 @@ all:
 	# Build the kernel module (.ko)
 	$(MAKE) -C $(KDIR) M=$(SRC) modules
 	# Build the overlay (.dtbo) using the system compiler inside the dts/rpi folder
-	dtc -@ -I dts -O dtb -o mira016.dtbo mira016-overlay.dts
+	dtc -@ -I dts -O dtb -o mira050.dtbo mira050-overlay.dts
 modules_install:
 	$(MAKE) -C $(KDIR) M=$(SRC) modules_install
 
