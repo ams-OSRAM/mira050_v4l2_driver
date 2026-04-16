@@ -1,16 +1,12 @@
 # Default to the running kernel's build directory
-
-KERNELRELEASE ?= $(shell uname -r)
-
-KDIR ?= /lib/modules/$(KERNELRELEASE)/build
-
+KDIR ?= /lib/modules/$(shell uname -r)/build
 SRC  := $(shell pwd)
 
 all:
 	# Build the kernel module (.ko)
 	$(MAKE) -C $(KDIR) M=$(SRC) modules
-	# Build the overlay (.dtbo) using the system compiler
-	dtc -@ -I dts -O dtb -o mira050.dtbo mira050-overlay.dts
+	# Build the overlay (.dtbo) using the system compiler inside the dts/rpi folder
+	dtc -@ -I dts -O dtb -o mira016.dtbo mira016-overlay.dts
 modules_install:
 	$(MAKE) -C $(KDIR) M=$(SRC) modules_install
 
