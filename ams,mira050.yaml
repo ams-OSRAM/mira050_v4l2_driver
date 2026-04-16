@@ -1,0 +1,108 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/media/i2c/mira050.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: ams 1/11-Inch 0.16 Mpixel CMOS Global Shutter Digital Image Sensor
+
+maintainers:
+  - Philippe Baetens <philippe.baetens@ams-osram.com>
+  - Philippe Baetens <philippebaetens@gmail.com>
+
+
+description: |-
+  The Ams mira050 is a 1/11-inch CMOS active pixel digital image sensor
+  with an active array size of 400 x 400V. It is programmable through
+  I2C interface. The I2C address is fixed to 0x36 as per sensor data sheet.
+  Image data is sent through MIPI CSI-2, using 1 data lane.
+
+properties:
+  compatible:
+    const: ams,mira050
+
+  reg:
+    description: I2C device address
+    maxItems: 1
+
+  clocks:
+    maxItems: 1
+
+  vddana-supply:
+    description:
+      Analog supply, 2.8 volts
+
+  vdddig-supply:
+    description:
+      Digital supply, 1.8 volts
+
+  vddl-supply:
+    description:
+      Digital supply, 1.2 volts
+
+
+  port:
+    $ref: /schemas/graph.yaml#/$defs/port-base
+    additionalProperties: false
+
+    properties:
+      endpoint:
+        $ref: /schemas/media/video-interfaces.yaml#
+        unevaluatedProperties: false
+
+        properties:
+          data-lanes:
+            description: |-
+              The sensor only supports 1 lane.
+            items:
+              - const: 1
+
+          clock-noncontinuous: true
+          link-frequencies: true
+
+        required:
+          - link-frequencies
+
+required:
+  - compatible
+  - reg
+  - clocks
+  - vddana-supply
+  - vdddig-supply
+  - vddl-supply
+  - port
+  - orientation
+  - rotation
+
+
+additionalProperties: false
+
+examples:
+  - |
+    i2c {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        mira050: sensor@36 {
+            compatible = "ams,mira050";
+            reg = <0x36>;
+            clocks = <&mira050_clk>;
+            vddana-supply = <&cam1_reg>;   /* 2.8v */
+            vdddig-supply = <&cam1_reg>;   /* 2.8v */
+            vddl-supply = <&cam1_reg>;   /* 2.8v */
+            rotation = <0>;
+            orientation = <0>;
+
+            port {
+                mira050_0: endpoint {
+                    remote-endpoint = <&csi_ep>; /* Add this here explicitly */
+                    clock-lanes = <0>;
+                    data-lanes = <1>;
+                    clock-noncontinuous;
+                    link-frequencies = /bits/ 64 <750000000>;
+                };
+            };
+        };
+    };
+
+...

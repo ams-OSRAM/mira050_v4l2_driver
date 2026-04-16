@@ -1,0 +1,26 @@
+// Fragment that configures an mira050
+
+cam_node: mira050@36 {
+	compatible = "ams,mira050";
+	reg = <0x36>;
+	status = "disabled";
+	clocks = <&cam1_clk>;
+	vana-supply = <&cam1_reg>;	/* 2.8v */
+	vdig-supply = <&cam_dummy_reg>;	/* 1.8v */
+	vddl-supply = <&cam_dummy_reg>;	/* 1.2v */
+
+	/* Add these two lines */
+    rotation = <0>;
+    orientation = <0>;
+	
+	port {
+		cam_endpoint: endpoint {
+			remote-endpoint = <&csi_ep>; /* Add this here explicitly */
+			clock-lanes = <0>;
+			data-lanes = <1>;
+			clock-noncontinuous;
+			link-frequencies =
+				/bits/ 64 <750000000>;
+		};
+	};
+};
