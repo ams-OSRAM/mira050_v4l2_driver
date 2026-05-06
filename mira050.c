@@ -148,7 +148,7 @@
 
 // #define MIRA050_MIN_VBLANK 11 // for 10b or 8b, 360fps
 // 50 fps
-#define MIRA050_MIN_VBLANK_60 900
+#define MIRA050_MIN_VBLANK_50 1232
 
 // 50 fps
 #define MIRA050_MIN_VBLANK_120 65
@@ -232,7 +232,9 @@
 #define MIRA050_ILLUM_ENABLE_DEFAULT 1;
 
 #define MIRA050_YWIN_DIR_REG 0x0023 // YWIN direction register
-#define MIRA050_YWIN_START_REG 0x002B // YWIN start register
+#define MIRA050_YWIN_START_REG 0x0026 // YWIN0 start register
+#define MIRA050_YWIN_START_VAL 0x0018 // YWIN0 start register for CSP crop 768 pixels
+#define MIRA050_YWIN_START_INVERT_VAL 0x0318 // YWIN0 start register for CSP crop 768 pixels
 #define MIRA050_XMIRROR_REG 0xe030 // YWIN start register
 
 
@@ -2517,26 +2519,31 @@ static const char *const mira050_supply_name[] = {
  * is monochrome
  */
 static const u32 mira050_mbus_color_formats[] = {
-	MEDIA_BUS_FMT_SRGGB12_1X12,
-	MEDIA_BUS_FMT_SGRBG12_1X12,
-	MEDIA_BUS_FMT_SGBRG12_1X12,
-	MEDIA_BUS_FMT_SBGGR12_1X12,
 
-	MEDIA_BUS_FMT_SRGGB10_1X10,
-	MEDIA_BUS_FMT_SGRBG10_1X10,
-	MEDIA_BUS_FMT_SGBRG10_1X10,
-	MEDIA_BUS_FMT_SBGGR10_1X10,
 
 	MEDIA_BUS_FMT_SRGGB8_1X8,
 	MEDIA_BUS_FMT_SGRBG8_1X8,
 	MEDIA_BUS_FMT_SGBRG8_1X8,
 	MEDIA_BUS_FMT_SBGGR8_1X8,
 
+	MEDIA_BUS_FMT_SRGGB10_1X10,
+	MEDIA_BUS_FMT_SGRBG10_1X10,
+	MEDIA_BUS_FMT_SGBRG10_1X10,
+	MEDIA_BUS_FMT_SBGGR10_1X10,
+		
+	MEDIA_BUS_FMT_SRGGB12_1X12,
+	MEDIA_BUS_FMT_SGRBG12_1X12,
+	MEDIA_BUS_FMT_SGBRG12_1X12,
+	MEDIA_BUS_FMT_SBGGR12_1X12,
+
+
+
 };
 static const u32 mira050_mbus_mono_formats[] = {
-	//MEDIA_BUS_FMT_Y12_1X12, not supported yet.
-	MEDIA_BUS_FMT_Y10_1X10,
 	MEDIA_BUS_FMT_Y8_1X8,
+	MEDIA_BUS_FMT_Y10_1X10,
+	// MEDIA_BUS_FMT_Y12_1X12, //not supported yet.
+
 };
 
 /* Mode configs */
@@ -2549,31 +2556,26 @@ static const u32 mira050_mbus_mono_formats[] = {
 #define MIRA050_SUPPORTED_MODE_SIZE_PUBLIC 1
 static const struct mira050_mode supported_modes[] = {
 	{
-		/* 12 bit mode */
+		/* 8 bit mode */
 		.width = 576,
 		.height = 768,
-		.crop = {
-			.left = MIRA050_PIXEL_ARRAY_LEFT,
-			.top = MIRA050_PIXEL_ARRAY_TOP,
-			.width = 576,
-			.height = 768},
+		.crop = {.left = MIRA050_PIXEL_ARRAY_LEFT, .top = MIRA050_PIXEL_ARRAY_TOP, .width = 576, .height = 768},
 		.reg_list_pre_soft_reset = {
-			.num_of_regs = ARRAY_SIZE(full_576_768_50fps_12b_1lane_reg_pre_soft_reset),
-			.regs = full_576_768_50fps_12b_1lane_reg_pre_soft_reset,
+			.num_of_regs = ARRAY_SIZE(full_576_768_50fps_8b_1lane_reg_pre_soft_reset),
+			.regs = full_576_768_50fps_8b_1lane_reg_pre_soft_reset,
 		},
 		.reg_list_post_soft_reset = {
-			.num_of_regs = ARRAY_SIZE(full_576_768_50fps_12b_1lane_reg_post_soft_reset),
-			.regs = full_576_768_50fps_12b_1lane_reg_post_soft_reset,
+			.num_of_regs = ARRAY_SIZE(full_576_768_50fps_8b_1lane_reg_post_soft_reset),
+			.regs = full_576_768_50fps_8b_1lane_reg_post_soft_reset,
 		},
-		.min_vblank = MIRA050_MIN_VBLANK_60,
+		.min_vblank = MIRA050_MIN_VBLANK_120,
 		.max_vblank = MIRA050_MAX_VBLANK,
-
 		.hblank = 0,
-		.bit_depth = 12,
-		.code = MEDIA_BUS_FMT_SRGGB12_1X12,
+		.bit_depth = 8,
+		.code = MEDIA_BUS_FMT_SRGGB8_1X8,
 		.gain_min = 0,
 		.gain_step = 1,
-		.gain_max = 2, // this is means 0,1,2 correspond to 1x 2x 4x gain
+		.gain_max = ARRAY_SIZE(fine_gain_lut_8bit_16x) - 1,
 	},
 	{
 		/* 10 bit highspeed / low power mode */
@@ -2598,27 +2600,32 @@ static const struct mira050_mode supported_modes[] = {
 		.gain_max = ARRAY_SIZE(fine_gain_lut_10bit_hs_4x) - 1,
 	},
 	{
-		/* 8 bit mode */
+		/* 12 bit mode */
 		.width = 576,
 		.height = 768,
-		.crop = {.left = MIRA050_PIXEL_ARRAY_LEFT, .top = MIRA050_PIXEL_ARRAY_TOP, .width = 576, .height = 768},
+		.crop = {
+			.left = MIRA050_PIXEL_ARRAY_LEFT,
+			.top = MIRA050_PIXEL_ARRAY_TOP,
+			.width = 576,
+			.height = 768},
 		.reg_list_pre_soft_reset = {
-			.num_of_regs = ARRAY_SIZE(full_576_768_50fps_8b_1lane_reg_pre_soft_reset),
-			.regs = full_576_768_50fps_8b_1lane_reg_pre_soft_reset,
+			.num_of_regs = ARRAY_SIZE(full_576_768_50fps_12b_1lane_reg_pre_soft_reset),
+			.regs = full_576_768_50fps_12b_1lane_reg_pre_soft_reset,
 		},
 		.reg_list_post_soft_reset = {
-			.num_of_regs = ARRAY_SIZE(full_576_768_50fps_8b_1lane_reg_post_soft_reset),
-			.regs = full_576_768_50fps_8b_1lane_reg_post_soft_reset,
+			.num_of_regs = ARRAY_SIZE(full_576_768_50fps_12b_1lane_reg_post_soft_reset),
+			.regs = full_576_768_50fps_12b_1lane_reg_post_soft_reset,
 		},
-		.min_vblank = MIRA050_MIN_VBLANK_120,
+		.min_vblank = MIRA050_MIN_VBLANK_50,
 		.max_vblank = MIRA050_MAX_VBLANK,
+
 		.hblank = 0,
-		.bit_depth = 8,
-		.code = MEDIA_BUS_FMT_SRGGB8_1X8,
+		.bit_depth = 12,
+		.code = MEDIA_BUS_FMT_SRGGB12_1X12,
 		.gain_min = 0,
 		.gain_step = 1,
-		.gain_max = ARRAY_SIZE(fine_gain_lut_8bit_16x) - 1,
-	},
+		.gain_max = 2, // this is means 0,1,2 correspond to 1x 2x 4x gain
+	}
 
 };
 
@@ -2647,8 +2654,7 @@ struct mira050
 
 	/* Current mode */
 	const struct mira050_mode *mode;
-	/* current bit depth, may defer from mode->bit_depth */
-	u8 bit_depth;
+
 	/* OTP_CALIBRATION_VALUE stored in OTP memory */
 
 	u16 otp_dark_cal_8bit;
@@ -2963,7 +2969,7 @@ static int mira050_otp_read(struct mira050 *mira050, u8 addr, u32 *val)
 	mira050_write(mira050, MIRA050_OTP_COMMAND, 0);
 	mira050_write(mira050, MIRA050_OTP_ADDR, addr);
 	mira050_write(mira050, MIRA050_OTP_START, 1);
-	usleep_range(15, 50);
+	fsleep(300);
 	mira050_write(mira050, MIRA050_OTP_START, 0);
 	for (poll_cnt = 0; poll_cnt < poll_cnt_max; poll_cnt++)
 	{
@@ -2974,12 +2980,13 @@ static int mira050_otp_read(struct mira050 *mira050, u8 addr, u32 *val)
 		}
 		else
 		{
-			usleep_range(5, 10);
+			fsleep(100);
+			printk(KERN_INFO "[MIRA050]: Read OTP  BUSY \n");
 		}
 	}
 	if (poll_cnt < poll_cnt_max && busy_status == 0)
 	{
-		usleep_range(15, 50);
+		fsleep(1000);
 		ret = mira050_read_be32(mira050, MIRA050_OTP_DOUT, val);
 		printk(KERN_INFO "[MIRA050]: Read OTP 0x%x, val = 0x%x.\n",
 		 		addr,*val);
@@ -3323,15 +3330,14 @@ static int mira050_write_analog_gain_reg(struct mira050 *mira050, u8 gain)
 	u16 dark_offset_100 = 1794; // noncont clock
 	u16 scale_factor = 1;
 	u16 preamp_gain_inv = 1;
-	u16 preamp_gain = 1;
 
 	u16 analog_gain = 1;
 	u16 offset_clipping = 0;
 	u16 scaled_offset = 0;
-	printk(KERN_INFO "[MIRA050]: Write analog gain %u",gain);
+	printk(KERN_INFO "[MIRA050]: Write analog gain %u for bitdepth %u",gain,mira050->mode->bit_depth);
 
 	// Select partial register sequence according to bit depth
-	if (mira050->bit_depth == 12)
+	if (mira050->mode->bit_depth == 12)
 	{
 		mira050_write_stop_streaming_regs(mira050);
 		usleep_range(wait_us, wait_us + 100);
@@ -3368,10 +3374,8 @@ static int mira050_write_analog_gain_reg(struct mira050 *mira050, u8 gain)
 			// Other gains are not supported
 			// printk(KERN_INFO "[MIRA050]: Ignore analog gain %u in 12 bit mode", gain);
 		}
-		// u16 part1 = (mira050->otp_dark_cal_12bit + dark_offset_100) / 100;
-		// u16 part3 = (dark_offset_100 / 100);
-		// u16 part2 = analog_gain / (scale_factor * preamp_gain);
-		scaled_offset = (u16)((mira050->otp_dark_cal_12bit + dark_offset_100) / 100 * analog_gain / (scale_factor * preamp_gain)) - (u16)(dark_offset_100 / 100);
+
+		// scaled_offset = (u16)((mira050->otp_dark_cal_12bit + dark_offset_100) / 100 * analog_gain / (scale_factor * preamp_gain)) - (u16)(dark_offset_100 / 100);
 
 
 		scaled_offset = (u16)(((mira050->otp_dark_cal_12bit + dark_offset_100) * analog_gain * preamp_gain_inv / (scale_factor)) - dark_offset_100) / 100;
@@ -3390,7 +3394,7 @@ static int mira050_write_analog_gain_reg(struct mira050 *mira050, u8 gain)
 
 		// mira050_write_start_streaming_regs(mira050);
 	}
-	else if (mira050->bit_depth == 10) // 10bit high speed mode gain 1-4
+	else if (mira050->mode->bit_depth == 10) // 10bit high speed mode gain 1-4
 	{
 		dark_offset_100 = 291; // noncont clock
 		scale_factor = 4;
@@ -3434,7 +3438,7 @@ static int mira050_write_analog_gain_reg(struct mira050 *mira050, u8 gain)
 			mira050_write_start_streaming_regs(mira050);
 		}
 	}
-	else if (mira050->bit_depth == 8)
+	else if (mira050->mode->bit_depth == 8)
 	{
 		dark_offset_100 = 72; // noncont clock
 		scale_factor = 16;
@@ -3500,6 +3504,23 @@ static int mira050_write_analog_gain_reg(struct mira050 *mira050, u8 gain)
 	return 0;
 }
 
+static void mira050_set_default_format(struct mira050 *mira050)
+{
+	struct v4l2_mbus_framefmt *fmt;
+	printk(KERN_INFO "[MIRA050]: mira050_set_default_format\n");
+
+	fmt = &mira050->fmt;
+	fmt->code = mira050->is_mono ? mira050_mbus_mono_formats[0]: mira050_mbus_color_formats[0]; // 8bit;
+	fmt->colorspace = V4L2_COLORSPACE_RAW;
+	fmt->ycbcr_enc = V4L2_MAP_YCBCR_ENC_DEFAULT(fmt->colorspace);
+	fmt->quantization = V4L2_MAP_QUANTIZATION_DEFAULT(true,
+													  fmt->colorspace,
+													  fmt->ycbcr_enc);
+	fmt->xfer_func = V4L2_MAP_XFER_FUNC_DEFAULT(fmt->colorspace);
+	fmt->width = supported_modes[0].width;
+	fmt->height = supported_modes[0].height;
+	fmt->field = V4L2_FIELD_NONE;
+}
 
 
 /* Get bayer order based on flip setting. */
@@ -3510,9 +3531,14 @@ static u32 mira050_get_format_code(struct mira050 *mira050, u32 code)
 		// for now only support Y10
 		for (i = 0; i < ARRAY_SIZE(mira050_mbus_mono_formats); i++)
 			if (mira050_mbus_mono_formats[i] == code)
-				return mira050_mbus_mono_formats[i];    
-		return mira050_mbus_mono_formats[0];    
+				break;
 
+		if (i >= ARRAY_SIZE(mira050_mbus_mono_formats))
+			{
+				i = 0;
+				printk(KERN_INFO "[MIRA050]: could not find mira050_mbus_mono_formats. %d \n",code);
+			}
+		return mira050_mbus_mono_formats[i];
 
     } 
 	else {
@@ -3520,10 +3546,11 @@ static u32 mira050_get_format_code(struct mira050 *mira050, u32 code)
 			if (mira050_mbus_color_formats[i] == code)
 				break;
 
-		if (i >= ARRAY_SIZE(mira050_mbus_color_formats))
+		if (i >= ARRAY_SIZE(mira050_mbus_color_formats)){
+			printk(KERN_INFO "[MIRA050]: could not find mira050_mbus_color_formats. %d \n",code);
 			i = 0;
-
-		i = (i & ~3) | (mira050->vflip->val ? 2 : 0) | (mira050->hflip->val ? 0 : 1);
+		}
+		i = (i & ~3) | (mira050->vflip->val ? 0 : 2) | (mira050->hflip->val ? 0 : 1);
 
 
 		return mira050_mbus_color_formats[i];    
@@ -3560,26 +3587,75 @@ static int mira050_set_pad_format(struct v4l2_subdev *sd,
 
 	// /* Validate format or use default */
 
+	/* Instead of just v4l2_find_nearest_size, manually find the mode matching the code */
 
-	mode = v4l2_find_nearest_size(supported_modes,
-				      ARRAY_SIZE(supported_modes), width,
-				      height, fmt->format.width,
-				      fmt->format.height);
+	switch (fmt->format.code)
+	{
+	case MEDIA_BUS_FMT_Y10_1X10:
+	case MEDIA_BUS_FMT_SRGGB10_1X10:
+	case MEDIA_BUS_FMT_SGRBG10_1X10:
+	case MEDIA_BUS_FMT_SGBRG10_1X10:
+	case MEDIA_BUS_FMT_SBGGR10_1X10:			
+	printk(KERN_INFO "[MIRA050]: fmt->format.code() selects 10 bit mode.\n");
+		mode = &supported_modes[1];
+		// return 0;
+		break;
 
+	case MEDIA_BUS_FMT_Y12_1X12:
+	case MEDIA_BUS_FMT_SGRBG12_1X12:
+	case MEDIA_BUS_FMT_SGBRG12_1X12:
+	case MEDIA_BUS_FMT_SBGGR12_1X12:
+	case MEDIA_BUS_FMT_SRGGB12_1X12:			
+	printk(KERN_INFO "[MIRA050]: fmt->format.code() selects 12 bit mode.\n");
+		mode = &supported_modes[2];
+		// return 0;
+		break;
+
+	case MEDIA_BUS_FMT_Y8_1X8:
+	case MEDIA_BUS_FMT_SRGGB8_1X8:
+	case MEDIA_BUS_FMT_SGRBG8_1X8:
+	case MEDIA_BUS_FMT_SGBRG8_1X8:
+	case MEDIA_BUS_FMT_SBGGR8_1X8:
+	printk(KERN_INFO "[MIRA050]: fmt->format.code() selects 8 bit mode.\n");
+		mode = &supported_modes[0];
+		// return 0;
+		break;
+	default:
+		printk(KERN_ERR "Unknown format requested fmt->format.code() %d", fmt->format.code);
+	}
+
+/* 2. Fallback: If code didn't match, use default nearest size */
+	if (!mode) {
+		printk(KERN_ERR "Unknown format requested: FALLBACK to  fmt->format.code() %d", fmt->format.code);
+		mode = v4l2_find_nearest_size(supported_modes,
+					      ARRAY_SIZE(supported_modes), width,
+					      height, fmt->format.width,
+					      fmt->format.height);
+	}
+
+
+
+	/* 3. Update the format structure for the caller */
 	mira050_update_pad_format(mira050, mode, &fmt->format, fmt->format.code);
 
+	/* 4. Update the state (Try or Active) */
 	format = v4l2_subdev_state_get_format(state, 0);
 	*format = fmt->format;
 
+	/* 5. Set the crop rectangle (using the now-initialized format pointer) */
 	crop = v4l2_subdev_state_get_crop(state, 0);
 	crop->width = format->width * 1;
 	crop->height = format->height * 1;
 	crop->left = MIRA050_PIXEL_ARRAY_LEFT;
 	crop->top = MIRA050_PIXEL_ARRAY_TOP;
 
+	/* 6. Only apply to global driver state if this is the ACTIVE call */
 	if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE) {
-		// mira050->fmt = fmt->format;
-		// mira050->mode = mode;
+		mira050->fmt = fmt->format;
+		mira050->mode = mode;
+		printk(KERN_INFO "[MIRA050]: Mira050 mode  = %d.   mode is %d \n", mira050->mode->code, mode->code);
+		printk(KERN_INFO "[MIRA050]: Mira050 fmt  = %d.   fmt is %d \n", mira050->fmt.code, fmt->format.code);
+		printk(KERN_INFO "[MIRA050]: Mira050 width  = %d.   height is %d \n", mira050->mode->width, mira050->mode->height);
 
 		// Update controls based on new mode (range and current value).
 		max_exposure = mira050_calculate_max_exposure_time(
@@ -3612,6 +3688,7 @@ static int mira050_set_pad_format(struct v4l2_subdev *sd,
 		__v4l2_ctrl_s_ctrl(mira050->vblank, mira050->mode->min_vblank);
 	}
 
+
 	return 0;
 }
 
@@ -3631,7 +3708,6 @@ static int mira050_set_framefmt(struct mira050 *mira050,
 	case MEDIA_BUS_FMT_SBGGR8_1X8:
 	printk(KERN_INFO "[MIRA050]: mira050_set_framefmt() selects 8 bit mode.\n");
 		mira050->mode = &supported_modes[0];
-		mira050->bit_depth = 8;
 		__v4l2_ctrl_modify_range(mira050->gain,
 								 0, ARRAY_SIZE(fine_gain_lut_8bit_16x) - 1, 1, 0);
 		return 0;
@@ -3642,7 +3718,6 @@ static int mira050_set_framefmt(struct mira050 *mira050,
 	case MEDIA_BUS_FMT_SBGGR10_1X10:		
 	printk(KERN_INFO "[MIRA050]: mira050_set_framefmt() selects 10 bit mode.\n");
 		mira050->mode = &supported_modes[1];
-		mira050->bit_depth = 10;
 		__v4l2_ctrl_modify_range(mira050->gain,
 								 0, ARRAY_SIZE(fine_gain_lut_10bit_hs_4x) - 1, 1, 0);
 		return 0;
@@ -3653,7 +3728,6 @@ static int mira050_set_framefmt(struct mira050 *mira050,
 	case MEDIA_BUS_FMT_SRGGB12_1X12:	
 		printk(KERN_INFO "[MIRA050]: mira050_set_framefmt() selects 12 bit mode.\n");
 		mira050->mode = &supported_modes[2];
-		mira050->bit_depth = 12;
 		__v4l2_ctrl_modify_range(mira050->gain,
 								 mira050->mode->gain_min, mira050->mode->gain_max,
 								 mira050->mode->gain_step, mira050->mode->gain_min);
@@ -3768,9 +3842,7 @@ static int mira050_set_ctrl(struct v4l2_ctrl *ctrl)
 
 			break;
 		case V4L2_CID_HFLIP:
-			// TODO: HFLIP requires multiple register writes
-			// ret = mira050_write(mira050, MIRA050_HFLIP_REG,
-			//		        ctrl->val);
+
 			printk(KERN_ERR "[MIRA050]: HFLIP: set %d.\n", ctrl->val);
 
 			if (ctrl->val == 0)
@@ -3788,26 +3860,20 @@ static int mira050_set_ctrl(struct v4l2_ctrl *ctrl)
 			}
 			break;
 		case V4L2_CID_VFLIP:
-			// {0x0029, 0x1},	// None
-			// {0x002A, 0x90}, // None
-			// {0x002B, 0x0},	// None
-			// {0x002C, 0xE},	// None
-			// TODO: VFLIP seems not supported in MIRA050
 			printk(KERN_ERR "[MIRA050]: VFLIP: set %d.\n", ctrl->val);
 			ret = mira050_write(mira050, MIRA050_BANK_SEL_REG, 0x00);
-
 			if (ctrl->val == 0)
 			{
 				printk(KERN_ERR "[MIRA050]: VFLIP: disable %d.\n", ctrl->val);
 				ret = mira050_write(mira050, MIRA050_YWIN_DIR_REG, 0x0);
-				ret = mira050_write_be16(mira050, MIRA050_YWIN_START_REG, 14);
+				ret = mira050_write_be16(mira050, MIRA050_YWIN_START_REG, MIRA050_YWIN_START_VAL);
 
 			}
 			else
 			{
 				printk(KERN_ERR "[MIRA050]: VFLIP: enable %d.\n", ctrl->val);
 				ret = mira050_write(mira050, MIRA050_YWIN_DIR_REG, 0x1);
-				ret = mira050_write_be16(mira050, MIRA050_YWIN_START_REG, 413);
+				ret = mira050_write_be16(mira050, MIRA050_YWIN_START_REG, MIRA050_YWIN_START_INVERT_VAL);
 			}
 
 			break;
@@ -3839,7 +3905,6 @@ static int mira050_set_ctrl(struct v4l2_ctrl *ctrl)
 
 	pm_runtime_put(&client->dev);
 
-	// TODO: FIXIT
 	return ret;
 }
 
@@ -3882,15 +3947,18 @@ static int mira050_enum_frame_size(struct v4l2_subdev *sd,
 				   struct v4l2_subdev_state *state,
 				   struct v4l2_subdev_frame_size_enum *fse)
 {
-	struct mira050 *mira050 = to_mira050(sd);
-	u32 code;
+	// struct mira050 *mira050 = to_mira050(sd);
+	// u32 code;
 
-	if (fse->index >= ARRAY_SIZE(supported_modes))
-		return -EINVAL;
+	// if (fse->index >= ARRAY_SIZE(supported_modes))
+	// 	return -EINVAL;
 
-	code = mira050_get_format_code(mira050, fse->code);
-	if (fse->code != code)
-		return -EINVAL;
+	// code = mira050_get_format_code(mira050, fse->code);
+	// if (fse->code != code)
+	// 	return -EINVAL;
+	// support only 1 frame size.
+	if (fse->index > 0)
+        return -EINVAL;
 
 	fse->min_width = supported_modes[fse->index].width;
 	fse->max_width = fse->min_width;
@@ -3905,6 +3973,7 @@ static int mira050_start_streaming(struct mira050 *mira050,
 				struct v4l2_subdev_state *state){
 	struct i2c_client *client = v4l2_get_subdevdata(&mira050->sd);
 	const struct mira050_reg_list *reg_list;
+
 
 	int ret;
 
@@ -3931,22 +4000,17 @@ static int mira050_start_streaming(struct mira050 *mira050,
 	printk(KERN_INFO "[MIRA050]: Register sequence for %d bit mode will be used.\n", mira050->mode->bit_depth);
 	fsleep(MIRA050_XCLR_MIN_DELAY_US);
 
-	if (mira050->skip_reg_upload == 0)
+
+	/* Apply pre soft reset default values of current mode */
+	reg_list = &mira050->mode->reg_list_pre_soft_reset;
+	printk(KERN_INFO "[MIRA050]: Write %d regs.\n", reg_list->num_of_regs);
+	ret = mira050_write_regs(mira050, reg_list->regs, reg_list->num_of_regs);
+	if (ret)
 	{
-		/* Apply pre soft reset default values of current mode */
-		reg_list = &mira050->mode->reg_list_pre_soft_reset;
-		printk(KERN_INFO "[MIRA050]: Write %d regs.\n", reg_list->num_of_regs);
-		ret = mira050_write_regs(mira050, reg_list->regs, reg_list->num_of_regs);
-		if (ret)
-		{
-			dev_err(&client->dev, "%s failed to set mode\n", __func__);
-			goto err_rpm_put;
-		}
+		dev_err(&client->dev, "%s failed to set mode\n", __func__);
+		goto err_rpm_put;
 	}
-	else
-	{
-		printk(KERN_INFO "[MIRA050]: Skip base register sequence upload, due to mira050->skip_reg_upload=%u.\n", mira050->skip_reg_upload);
-	}
+
 
 	printk(KERN_INFO "[MIRA050]: Entering v4l2 ctrl handler setup function.\n");
 
@@ -3957,6 +4021,9 @@ static int mira050_start_streaming(struct mira050 *mira050,
 		goto err_rpm_put;
 
 	usleep_range(8000, 10000);
+
+
+
 
 
 	printk(KERN_INFO "[MIRA050]: Writing start streaming regs.\n");
@@ -4229,7 +4296,14 @@ static int mira050_probe(struct i2c_client *client)
 	struct device *dev = &client->dev;
 	struct mira050 *mira050;
 	int ret;
+	const struct mira050_reg_list *reg_list;
 
+	u32 unused;
+	u32 otp_dark_cal_8bit;
+	u32 otp_dark_cal_10bit_hs;
+	u32 otp_dark_cal_10bit;
+	u32 otp_dark_cal_12bit;
+	
 	printk(KERN_INFO "[MIRA050]: probing v4l2 sensor.\n");
 	printk(KERN_INFO "[MIRA050]: Driver Version 0.0.\n");
 
@@ -4292,7 +4366,7 @@ static int mira050_probe(struct i2c_client *client)
 	if (ret)
 		return ret;
 
-	fsleep(100000);
+	fsleep(130000);
 	printk(KERN_INFO "[MIRA050]: Entering identify function.\n");
 
 	ret = mira050_identify_module(mira050);
@@ -4305,6 +4379,83 @@ static int mira050_probe(struct i2c_client *client)
 	printk(KERN_INFO "[MIRA050]: Setting support function.\n");
 
 
+	/* Set default mode to max resolution */
+	mira050->mode = &supported_modes[0];
+	/* Set default mode to max resolution */
+	
+	/* upload registers to make otp work. */
+	reg_list = &mira050->mode->reg_list_pre_soft_reset;
+	printk(KERN_INFO "[MIRA050]: To make OTP work: Write %d regs.\n", reg_list->num_of_regs);
+	ret = mira050_write_regs(mira050, reg_list->regs, reg_list->num_of_regs);
+	if (ret)
+	{
+		dev_err(&client->dev, "%s failed to set mode\n", __func__);
+		goto error_subdev_cleanup;
+	}
+
+
+	ret = mira050_otp_read(mira050, 0x00, &unused);
+	ret = mira050_otp_read(mira050, 0x01, &unused);
+	ret = mira050_otp_read(mira050, 0x02, &unused);
+	printk(KERN_INFO "[MIRA050]: readback test value unused: . %d \n",unused);
+	ret = mira050_otp_read(mira050, 0x03, &unused);
+	printk(KERN_INFO "[MIRA050]: readback test value unused: . %d \n",unused);
+
+
+
+	/* ********* READ OTP VALUES for revB - all modes ********** */
+	ret = mira050_otp_read(mira050, 0x04, &otp_dark_cal_8bit);
+	/* OTP_CALIBRATION_VALUE is little-endian, LSB at [7:0], MSB at [15:8] */
+	mira050->otp_dark_cal_8bit = (u16)(otp_dark_cal_8bit & 0x0000FFFF);
+	if (ret)
+	{
+		dev_err(&client->dev, "%s failed to read OTP addr 0x04.\n", __func__);
+	}
+	else
+	{
+		printk(KERN_INFO "[MIRA050]: OTP_CALIBRATION_VALUE 8b: %u, extracted from 32-bit 0x%X.\n", mira050->otp_dark_cal_8bit, otp_dark_cal_8bit);
+	}
+	ret = mira050_otp_read(mira050, 0x05, &otp_dark_cal_10bit_hs);
+	/* OTP_CALIBRATION_VALUE is little-endian, LSB at [7:0], MSB at [15:8] */
+	mira050->otp_dark_cal_10bit_hs = (u16)(otp_dark_cal_10bit_hs & 0x0000FFFF);
+	if (ret)
+	{
+		dev_err(&client->dev, "%s failed to read OTP addr 0x05.\n", __func__);
+	}
+	else
+	{
+		printk(KERN_INFO "[MIRA050]: OTP_CALIBRATION_VALUE 10b hs: %u, extracted from 32-bit 0x%X.\n", mira050->otp_dark_cal_10bit_hs, otp_dark_cal_10bit_hs);
+	}
+	ret = mira050_otp_read(mira050, 0x06, &otp_dark_cal_10bit);
+	/* OTP_CALIBRATION_VALUE is little-endian, LSB at [7:0], MSB at [15:8] */
+	mira050->otp_dark_cal_10bit = (u16)(otp_dark_cal_10bit & 0x0000FFFF);
+	if (ret)
+	{
+		dev_err(&client->dev, "%s failed to read OTP addr 0x06.\n", __func__);
+	}
+	else
+	{
+		printk(KERN_INFO "[MIRA050]: OTP_CALIBRATION_VALUE 10b: %u, extracted from 32-bit 0x%X.\n", mira050->otp_dark_cal_10bit, otp_dark_cal_10bit);
+	}
+	// 12 bit
+	usleep_range(10, 50);
+	ret = mira050_otp_read(mira050, 0x07, &otp_dark_cal_12bit);
+	/* OTP_CALIBRATION_VALUE is little-endian, LSB at [7:0], MSB at [15:8] */
+	mira050->otp_dark_cal_12bit = (u16)(otp_dark_cal_12bit & 0x0000FFFF);
+
+	if (ret)
+	{
+		dev_err(&client->dev, "%s failed to read OTP addr 0x07.\n", __func__);
+	}
+	else
+	{
+		printk(KERN_INFO "[MIRA050]: OTP_CALIBRATION_VALUE 12b: %u, extracted from 32-bit 0x%X.\n", mira050->otp_dark_cal_12bit, otp_dark_cal_12bit);
+	}
+
+
+
+
+
 	/* Initialize default illumination trigger parameters */
 	/* ILLUM_WIDTH is in unit of SEQ_TIME_BASE, equal to (8/MIRA050_DATA_RATE) us. */
 	mira050->illum_width = MIRA050_ILLUM_WIDTH_DEFAULT;
@@ -4315,9 +4466,7 @@ static int mira050_probe(struct i2c_client *client)
 
 	printk(KERN_INFO "[MIRA050]: Probe part1 successfull.\n");
 
-	/* Set default mode to max resolution */
-	mira050->mode = &supported_modes[0];
-	/* Set default mode to max resolution */
+
 
 	printk(KERN_INFO "[MIRA050]: Entering init controls function.\n");
 
@@ -4327,6 +4476,11 @@ static int mira050_probe(struct i2c_client *client)
 		dev_err(dev, "failed to init controls\n");
 		goto error_power_off;
 	}
+
+
+	mira050_set_default_format(mira050);
+
+
 	/* Initialize subdev */
 	mira050->sd.internal_ops = &mira050_internal_ops;
 	mira050->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE |
