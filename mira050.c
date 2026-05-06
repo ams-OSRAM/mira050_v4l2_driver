@@ -106,6 +106,9 @@
 #define MIRA050_EXP_TIME_L_REG 0x000E
 #define MIRA050_EXP_TIME_S_REG 0x0012
 
+// version id register, bank 0
+#define MIRA050_VERSION_ID_REG 0x11B
+
 // Target frame time is indicated in us
 #define MIRA050_TARGET_FRAME_TIME_REG 0x0008
 #define MIRA050_GLOB_NUM_CLK_CYCLES 1928
@@ -2513,7 +2516,7 @@ static const char *const mira050_supply_name[] = {
  * The supported formats. All flip/mirror combinations have the same byte order because the sensor
  * is monochrome
  */
-static const u32 mira050_mbus_formats[] = {
+static const u32 mira050_mbus_color_formats[] = {
 	MEDIA_BUS_FMT_SRGGB12_1X12,
 	MEDIA_BUS_FMT_SGRBG12_1X12,
 	MEDIA_BUS_FMT_SGBRG12_1X12,
@@ -2529,6 +2532,11 @@ static const u32 mira050_mbus_formats[] = {
 	MEDIA_BUS_FMT_SGBRG8_1X8,
 	MEDIA_BUS_FMT_SBGGR8_1X8,
 
+};
+static const u32 mira050_mbus_mono_formats[] = {
+	//MEDIA_BUS_FMT_Y12_1X12, not supported yet.
+	MEDIA_BUS_FMT_Y10_1X10,
+	MEDIA_BUS_FMT_Y8_1X8,
 };
 
 /* Mode configs */
@@ -2619,6 +2627,7 @@ struct mira050
 	struct v4l2_subdev sd;
 	struct media_pad pad;
 	struct v4l2_mbus_framefmt fmt;
+	bool is_mono;           /* New: Identify sensor variant */	
 
 	struct clk *xclk; /* system clock to MIRA050 */
 	u32 xclk_freq;
@@ -3497,18 +3506,29 @@ static int mira050_write_analog_gain_reg(struct mira050 *mira050, u8 gain)
 static u32 mira050_get_format_code(struct mira050 *mira050, u32 code)
 {
 	unsigned int i;
-
-	for (i = 0; i < ARRAY_SIZE(mira050_mbus_formats); i++)
-		if (mira050_mbus_formats[i] == code)
-			break;
-
-	if (i >= ARRAY_SIZE(mira050_mbus_formats))
-		i = 0;
-
-	i = (i & ~3) | (mira050->vflip->val ? 2 : 0) | (mira050->hflip->val ? 0 : 1);
+	if (mira050->is_mono) {
+		// for now only support Y10
+		for (i = 0; i < ARRAY_SIZE(mira050_mbus_mono_formats); i++)
+			if (mira050_mbus_mono_formats[i] == code)
+				return mira050_mbus_mono_formats[i];    
+		return mira050_mbus_mono_formats[0];    
 
 
-	return mira050_mbus_formats[i];
+    } 
+	else {
+		for (i = 0; i < ARRAY_SIZE(mira050_mbus_color_formats); i++)
+			if (mira050_mbus_color_formats[i] == code)
+				break;
+
+		if (i >= ARRAY_SIZE(mira050_mbus_color_formats))
+			i = 0;
+
+		i = (i & ~3) | (mira050->vflip->val ? 2 : 0) | (mira050->hflip->val ? 0 : 1);
+
+
+		return mira050_mbus_color_formats[i];    
+	}
+	return code;
 }
 
 
@@ -3835,11 +3855,25 @@ static int mira050_enum_mbus_code(struct v4l2_subdev *sd,
 {
 	struct mira050 *mira050 = to_mira050(sd);
 
-	if (code->index >= (ARRAY_SIZE(mira050_mbus_formats) / 4))
-		return -EINVAL;
 
-	code->code = mira050_get_format_code(
-		mira050, mira050_mbus_formats[code->index * 4]);
+	if (mira050->is_mono) {
+		if (code->index >= (ARRAY_SIZE(mira050_mbus_mono_formats) ))
+			return -EINVAL;
+		printk(KERN_INFO "[MIRA050]: Mira050 enum_mbus_code: mono   \n");
+
+		code->code = mira050_get_format_code(
+			mira050, mira050_mbus_mono_formats[code->index ]);
+    
+    }
+	else {
+
+		if (code->index >= (ARRAY_SIZE(mira050_mbus_color_formats) / 4))
+			return -EINVAL;
+		printk(KERN_INFO "[MIRA050]: Mira050 enum_mbus_code: color   \n");
+
+		code->code = mira050_get_format_code(
+			mira050, mira050_mbus_color_formats[code->index * 4]);
+    }
 
 	return 0;
 }
@@ -3998,24 +4032,54 @@ static int mira050_get_regulators(struct mira050 *mira050)
 								   MIRA050_NUM_SUPPLIES,
 								   mira050->supplies);
 }
-
 /* Verify chip ID */
+/*
+Based on the ordering code, one can spot the version number:
+Example:
+Mira050-1QM3D0 is revision 1 (revA)
+Mira050-2QM3D0 is revision 2 (revB)
+only revision 2 is supported by this driver.
+The version ID of Mira050 revB is 35 – while revA has 33.
+*/
 static int mira050_identify_module(struct mira050 *mira050)
 {
-	int ret;
-	u8 val;
+    int ret;
+    u8 version_id;
 
-	ret = mira050_read(mira050, 0x25, &val);
-	printk(KERN_INFO "[MIRA050]: Read reg 0x%4.4x, val = 0x%x.\n",
-		   0x25, val);
-	ret = mira050_read(mira050, 0x3, &val);
-	printk(KERN_INFO "[MIRA050]: Read reg 0x%4.4x, val = 0x%x.\n",
-		   0x3, val);
-	ret = mira050_read(mira050, 0x4, &val);
-	printk(KERN_INFO "[MIRA050]: Read reg 0x%4.4x, val = 0x%x.\n",
-		   0x4, val);
+    // Ensure we are on the correct register bank
+    ret = mira050_write(mira050, MIRA050_BANK_SEL_REG, 0);
+    if (ret)
+        return ret;
 
-	return 0;
+    // Read the version ID from the sensor
+    ret = mira050_read(mira050, MIRA050_VERSION_ID_REG, &version_id);
+    if (ret) {
+        printk(KERN_ERR "[MIRA050]: Failed to read version ID register\n");
+        return ret;
+    }
+
+    /* Logic to check sensor revision */
+    switch (version_id) {
+    case 35:
+        // Version 35 is Mira050 Revision 2 (Supported)
+        printk(KERN_INFO "[MIRA050]: Detected Mira050 Revision 2 (ID: 35). Supported.\n");
+        ret = 0;
+        break;
+
+    case 33:
+        // Version 33 is Mira050 Revision 1 (Unsupported)
+        printk(KERN_ERR "[MIRA050]: Detected Mira050 Revision 1 (ID: 33). This version is not supported.\n");
+        ret = -ENODEV; // Return "No such device" error
+        break;
+
+    default:
+        // Any other ID
+        printk(KERN_ERR "[MIRA050]: No valid sensor detected. Unexpected ID: 0x%x\n", version_id);
+        ret = -ENXIO; // Return "No such device or address"
+        break;
+    }
+
+    return ret;
 }
 
 
@@ -4178,10 +4242,21 @@ static int mira050_probe(struct i2c_client *client)
 	v4l2_i2c_subdev_init(&mira050->sd, client, &mira050_subdev_ops);
 
 
-	/* Parse device tree to check if dtoverlay has param skip-reg-upload=1 */
-	device_property_read_u32(dev, "skip-reg-upload", &mira050->skip_reg_upload);
-	printk(KERN_INFO "[MIRA050]: skip-reg-upload %d.\n", mira050->skip_reg_upload);
-	/* Set default TBD I2C device address to LED I2C Address*/
+	mira050->is_mono = device_property_read_bool(&client->dev, "mira,mono");
+
+	if (mira050->is_mono) {
+		printk(KERN_INFO "[MIRA050]: DTOVERLAY MONO.\n");
+		printk(KERN_INFO "[MIRA050]: probing v4l2 sensor ams mira050 kernel module: MONO..\n");
+		// Set your internal state to use MEDIA_BUS_FMT_Y10_1X10
+		// and perhaps change the entity name to "mira050-mono"
+	} else {
+		printk(KERN_INFO "[MIRA050]: probing v4l2 sensor ams mira050 kernel module: COLOR..\n");
+
+		printk(KERN_INFO "[MIRA050]: DTOVERLAY COLOUR.\n");
+		// Set your internal state to use MEDIA_BUS_FMT_SRGGB10_1X10
+	}
+	if (!mira050)
+		return -ENOMEM;
 
 	/* Get system clock (xclk) */
 	mira050->xclk = devm_clk_get(dev, NULL);
