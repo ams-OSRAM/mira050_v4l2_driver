@@ -159,6 +159,12 @@
 #define MIRA016_OTP_10BIT_HS_BLC	0x05
 #define MIRA016_OTP_10BIT_BLC		0x06
 #define MIRA016_OTP_12BIT_BLC		0x07
+/*
+ * SAP material code of wafer sort run #1..#4, one UINT32 per word. A retry of
+ * the sort programs the next word, so the last programmed one is valid.
+ */
+#define MIRA050_OTP_SAP_FIRST		0x3b
+#define MIRA050_OTP_SAP_RUNS		4
 
 /* MIPI CSI-2 link frequency for 1.5Mbps per lane */
 #define MIRA016_LINK_FREQ_750M		750000000
@@ -323,6 +329,7 @@ struct mira016 {
 	unsigned int bus_config;
 
 	bool is_mono;
+	bool is_rgbir;
 	const u32 *formats;
 
 	struct v4l2_ctrl_handler ctrl_handler;
@@ -3826,7 +3833,7 @@ static int mira016_write_analogue_gain(struct mira016 *mira016,
 		cal_value = (u32)mira016->otp_data.blc_8bits;
 		preamp_gain_inv = 16 / (lut->gdig_preamp + 1);
 		analog_gain = lut->gain_256;
-		target_black_level = 16; // or 8 ?
+		target_black_level = 8; // or 8 ?
 		dark_offset_100 = 72;
 		scale_factor = 16;
 		cds_offset = 1540;
@@ -3968,11 +3975,12 @@ static int mira016_identify_module(struct mira016 *mira016)
 	/* Adjust the format list according to the chip. */
 	switch (mira016->info->chip_id) {
 	case MIRA016_CHIP_ID:
+		/* Mira016 is only sold as mono (3QM... ordering codes). */
 		mira016->is_mono = true;
 		mira016->formats = mira016_mbus_mono_formats;
 		break;
 	case MIRA050_CHIP_ID:
-		/* TODO: Support mono version of Mira050. */
+		/* Default to color; mira050_detect_variant() refines this. */
 		mira016->is_mono = false;
 		mira016->formats = mira050_mbus_color_formats;
 		break;
@@ -4050,14 +4058,18 @@ static const struct dev_pm_ops mira016_pm_ops = {
 
 static int mira016_otp_read(struct mira016 *mira016, u8 addr, u64 *val, int *err)
 {
-	u64 otp_busy;
+	u64 otp_busy = 0;
+	int poll_ret = 0;
 	int ret = 0;
 
-	dev_info(mira016->dev, "%s: addr 0x%02x\n", __func__, addr);
+	/* Never leave *val uninitialized, callers use it even after errors. */
+	*val = 0;
+
+	dev_dbg(mira016->dev, "%s: addr 0x%02x\n", __func__, addr);
 
 	if (err && *err) {
-		dev_info(mira016->dev, "%s: skipped, earlier error %d\n",
-			 __func__, *err);
+		dev_dbg(mira016->dev, "%s: skipped, earlier error %d\n",
+			__func__, *err);
 		return *err;
 	}
 
@@ -4068,24 +4080,36 @@ static int mira016_otp_read(struct mira016 *mira016, u8 addr, u64 *val, int *err
 		  MIRA016_OTP_START, &ret);
 	fsleep(300);
 	cci_write(mira016->regmap, MIRA016_OTP_START_REG, 0, &ret);
-	dev_info(mira016->dev, "%s: command writes done, ret %d\n",
-		 __func__, ret);
+	dev_dbg(mira016->dev, "%s: command writes done, ret %d\n",
+		__func__, ret);
+	/* A failed write means the read never started, do not poll or read. */
+	if (ret)
+		goto out;
 
-	ret = read_poll_timeout(cci_read, ret,
-				(ret < 0 || !(otp_busy & MIRA016_OTP_BUSY)),
+	/*
+	 * read_poll_timeout() evaluates to 0 whenever the condition is true,
+	 * which includes a failed register read. Keep that result apart from
+	 * the timeout so the I2C error is not lost.
+	 */
+	ret = read_poll_timeout(cci_read, poll_ret,
+				(poll_ret < 0 || !(otp_busy & MIRA016_OTP_BUSY)),
 				100, 1000, false, mira016->regmap,
 				MIRA016_OTP_BUSY_REG, &otp_busy, NULL);
-	dev_info(mira016->dev, "%s: busy poll ret %d, otp_busy 0x%llx\n",
-		 __func__, ret, otp_busy);
+	if (!ret)
+		ret = poll_ret;
+	dev_dbg(mira016->dev, "%s: busy poll ret %d, otp_busy 0x%llx\n",
+		__func__, ret, otp_busy);
 	if (ret) {
 		dev_err(mira016->dev, "Failed to read OTP\n");
-		return ret;
+		goto out;
 	}
 
 	cci_read(mira016->regmap, MIRA016_OTP_DOUT_REG, val, &ret);
-	dev_info(mira016->dev, "%s: addr 0x%02x dout 0x%llx, ret %d\n",
-		 __func__, addr, *val, ret);
+	dev_dbg(mira016->dev, "%s: addr 0x%02x dout 0x%llx, ret %d\n",
+		__func__, addr, *val, ret);
 
+out:
+	/* Report every failure through *err too, callers chain on it. */
 	if (err)
 		*err = ret;
 
@@ -4111,6 +4135,146 @@ static int mira016_read_otp_calibration(struct mira016 *mira016)
 	mira016->otp_data.blc_12bits = val & 0xffff;
 
 	return ret;
+}
+
+/* Sensor variants that can be told apart by the SAP material code. */
+enum mira050_variant {
+	MIRA050_VARIANT_MONO,	/* No color filter (MIRA050-2QM...) */
+	MIRA050_VARIANT_COLOR,	/* RGB color filter (MIRA050-2QC...) */
+	MIRA050_VARIANT_RGBIR,	/* RGB-IR color filter (MIRA050-2QI...) */
+};
+
+static const char * const mira050_variant_names[] = {
+	[MIRA050_VARIANT_MONO] = "mono",
+	[MIRA050_VARIANT_COLOR] = "color",
+	[MIRA050_VARIANT_RGBIR] = "RGB-IR",
+};
+
+/*
+ * The Mira050 products from the SAP material list. Only the parts of the
+ * datasheet ordering list have a name, which is logged to identify the part.
+ * The other codes (wafer, test and intermediate stages) have no name but are
+ * still listed, so that the color filter is detected for them as well.
+ */
+static const struct mira050_product {
+	u32 sap;
+	const char *name;	/* NULL if not in the datasheet */
+	enum mira050_variant variant;
+} mira050_products[] = {
+	/* Mono: 2QM... */
+	{ 511930034, NULL, MIRA050_VARIANT_MONO },	/* 2QM0A0 LOGIC BSI UW */
+	{ 511930035, NULL, MIRA050_VARIANT_MONO },	/* 2QM0A0 UW */
+	{ 511930036, NULL, MIRA050_VARIANT_MONO },	/* 2QM1A0 UW */
+	{ 511930037, NULL, MIRA050_VARIANT_MONO },	/* 2QM1A0 SW */
+	{ 511930038, NULL, MIRA050_VARIANT_MONO },	/* 2QM1WA UT */
+	{ 511930039, "MIRA050-2QM1WB", MIRA050_VARIANT_MONO },	/* CSP */
+	{ 511930040, NULL, MIRA050_VARIANT_MONO },	/* 2QM3A0 UW */
+	{ 511930041, "MIRA050-2QM3D0", MIRA050_VARIANT_MONO },	/* RW */
+	{ 511930055, NULL, MIRA050_VARIANT_MONO },	/* 2QM3A0 SW */
+	/* Color (RGB): 2QC... */
+	{ 511930042, NULL, MIRA050_VARIANT_COLOR },	/* 2QC1A0 UW */
+	{ 511930043, NULL, MIRA050_VARIANT_COLOR },	/* 2QC1A0 SW */
+	{ 511930044, NULL, MIRA050_VARIANT_COLOR },	/* 2QC1WA UT */
+	{ 511930045, "MIRA050-2QC1WB", MIRA050_VARIANT_COLOR },	/* CSP */
+	{ 511930046, NULL, MIRA050_VARIANT_COLOR },	/* 2QC3A0 UW */
+	{ 511930047, "MIRA050-2QC3D0", MIRA050_VARIANT_COLOR },	/* RW */
+	{ 511930056, NULL, MIRA050_VARIANT_COLOR },	/* 2QC3A0 SW */
+	/* Color (RGB-IR): 2QI... */
+	{ 511930048, NULL, MIRA050_VARIANT_RGBIR },	/* 2QI1A0 UW */
+	{ 511930049, NULL, MIRA050_VARIANT_RGBIR },	/* 2QI1A0 SW */
+	{ 511930050, NULL, MIRA050_VARIANT_RGBIR },	/* 2QI1WA UT */
+	{ 511930051, "MIRA050-2QI1WB", MIRA050_VARIANT_RGBIR },	/* CSP */
+	{ 511930052, NULL, MIRA050_VARIANT_RGBIR },	/* 2QI3A0 UW */
+	{ 511930053, NULL, MIRA050_VARIANT_RGBIR },	/* 2QI3A0 SW */
+	{ 511930054, "MIRA050-2QI3D0", MIRA050_VARIANT_RGBIR },	/* RW */
+};
+
+/* Find the product of a SAP material code, NULL if it is not a Mira050 one. */
+static const struct mira050_product *mira050_find_product(u32 sap)
+{
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(mira050_products); i++) {
+		if (mira050_products[i].sap == sap)
+			return &mira050_products[i];
+	}
+
+	return NULL;
+}
+
+/*
+ * The color filter is fixed at manufacturing and recorded in OTP as the SAP
+ * material code of the wafer sort. Each sort run programs the next word, so
+ * scan backwards and take the last programmed one.
+ *
+ * If there is no code, or it is not a known one, fall back to the
+ * "mira,mono" device tree property (dtoverlay=mira050,mono).
+ */
+static int mira050_detect_variant(struct mira016 *mira016)
+{
+	bool dt_mono = device_property_read_bool(mira016->dev, "mira,mono");
+	const struct mira050_product *product = NULL;
+	enum mira050_variant variant;
+	u32 sap = 0;
+	int ret;
+	u64 val;
+	int i;
+
+	/* The SAP material code only exists in the Mira050 OTP map. */
+	if (mira016->info->chip_id != MIRA050_CHIP_ID)
+		return 0;
+
+	for (i = MIRA050_OTP_SAP_RUNS - 1; i >= 0; i--) {
+		ret = mira016_otp_read(mira016, MIRA050_OTP_SAP_FIRST + i,
+				       &val, NULL);
+		if (ret)
+			return ret;
+
+		/* Unprogrammed OTP reads as all zeros or all ones. */
+		if (val && val != U32_MAX) {
+			sap = val;
+			break;
+		}
+	}
+
+	if (sap)
+		product = mira050_find_product(sap);
+
+	if (!product) {
+		/* No usable code: trust the device tree, color by default. */
+		variant = dt_mono ? MIRA050_VARIANT_MONO : MIRA050_VARIANT_COLOR;
+		if (sap)
+			dev_warn(mira016->dev,
+				 "SAP material code %u not recognized, using %s from device tree\n",
+				 sap, mira050_variant_names[variant]);
+		else
+			dev_warn(mira016->dev,
+				 "no SAP material code in OTP, using %s from device tree\n",
+				 mira050_variant_names[variant]);
+	} else {
+		variant = product->variant;
+		dev_info(mira016->dev, "SAP material code %u: %s, %s sensor\n",
+			 sap, product->name ?: "MIRA050 (not in datasheet)",
+			 mira050_variant_names[variant]);
+		/* The OTP is authoritative, but tell about a wrong overlay. */
+		if (dt_mono && variant != MIRA050_VARIANT_MONO)
+			dev_warn(mira016->dev,
+				 "device tree requests mono but OTP says %s, using OTP\n",
+				 mira050_variant_names[variant]);
+	}
+
+	mira016->is_mono = variant == MIRA050_VARIANT_MONO;
+	mira016->is_rgbir = variant == MIRA050_VARIANT_RGBIR;
+
+	/*
+	 * There is no media bus format for the RGB-IR pattern, so RGB-IR
+	 * reports the same formats as color for now. Use is_rgbir to tell
+	 * the two apart.
+	 */
+	mira016->formats = mira016->is_mono ? mira016_mbus_mono_formats :
+					      mira050_mbus_color_formats;
+
+	return 0;
 }
 
 static int mira016_init_controls(struct mira016 *mira016)
@@ -4525,6 +4689,10 @@ static int mira016_probe(struct i2c_client *client)
 	pm_runtime_enable(dev);
 
 	ret = mira016_identify_module(mira016);
+	if (ret)
+		goto error_power_off;
+
+	ret = mira050_detect_variant(mira016);
 	if (ret)
 		goto error_power_off;
 
